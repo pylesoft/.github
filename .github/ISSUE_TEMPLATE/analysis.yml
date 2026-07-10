@@ -1,0 +1,26 @@
+name: Analysis
+description: Investigate a problem, opportunity, or design decision.
+title: ""
+type: Analysis
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question or decision
+      description: What must this analysis determine?
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Available evidence
+      description: Add observations, data, constraints, and relevant links.
+    validations:
+      required: false
+  - type: textarea
+    id: done
+    attributes:
+      label: Completion criteria
+      description: What deliverable or decision completes the analysis?
+    validations:
+      required: true

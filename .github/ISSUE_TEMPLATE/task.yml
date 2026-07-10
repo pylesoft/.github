@@ -1,0 +1,19 @@
+name: Task
+description: Define implementation or operational work.
+title: ""
+type: Task
+body:
+  - type: textarea
+    id: work
+    attributes:
+      label: Work
+      description: Describe what must be done and why.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Completion criteria
+      description: List the observable conditions for completion.
+    validations:
+      required: true

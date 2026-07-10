@@ -1,0 +1,27 @@
+name: Bug
+description: Report confirmed incorrect behavior.
+title: ""
+labels: [bug]
+type: Bug
+body:
+  - type: textarea
+    id: current_behavior
+    attributes:
+      label: Current behavior
+      description: What happens now?
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What should happen instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide the smallest reliable reproduction, including environment details.
+    validations:
+      required: false

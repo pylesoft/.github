@@ -1,0 +1,19 @@
+name: Triage
+description: Capture new work before it is fully classified.
+title: ""
+type: Triage
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the request, problem, or opportunity.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Add relevant links, screenshots, customer context, or constraints.
+    validations:
+      required: false
