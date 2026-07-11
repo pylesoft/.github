@@ -102,11 +102,49 @@ function Get-LabelNames {
     } | Sort-Object -Unique)
 }
 
+function Get-IssuePriority {
+    param(
+        [Parameter(Mandatory)] [string] $Organization,
+        [Parameter(Mandatory)] [string] $Repository,
+        [Parameter(Mandatory)] [int] $Number,
+        [Parameter(Mandatory)] [string] $Kind,
+        [string[]] $Labels
+    )
+
+    if ($Kind -ne 'issue') {
+        return $null
+    }
+
+    $hasPriorityMigration = $false
+    foreach ($label in $Labels) {
+        if ($legacyRules.ContainsKey($label) -and $legacyRules[$label].ContainsKey('priority')) {
+            $hasPriorityMigration = $true
+            break
+        }
+    }
+
+    if (-not $hasPriorityMigration) {
+        return $null
+    }
+
+    $fieldValues = @(Invoke-GhGet -Endpoint "repos/$Organization/$Repository/issues/$Number/issue-field-values?per_page=100")
+    $priority = @($fieldValues | Where-Object {
+        $null -ne $_ -and $_.PSObject.Properties.Name -contains 'issue_field_name' -and $_.issue_field_name -eq 'Priority'
+    } | Select-Object -First 1)
+
+    if ($priority.Count -eq 0 -or $null -eq $priority[0].single_select_option) {
+        return $null
+    }
+
+    return [string] $priority[0].single_select_option.name
+}
+
 function New-Proposal {
     param(
         [Parameter(Mandatory)] [string] $Organization,
         [Parameter(Mandatory)] [object] $Repository,
-        [Parameter(Mandatory)] [object] $Item
+        [Parameter(Mandatory)] [object] $Item,
+        [AllowNull()] [string] $CurrentPriority
     )
 
     $kind = if ($Item.PSObject.Properties.Name -contains 'pull_request' -and $null -ne $Item.pull_request) { 'pull_request' } else { 'issue' }
@@ -153,6 +191,8 @@ function New-Proposal {
         if ($kind -eq 'issue' -and $rule.ContainsKey('state_reason')) {
             if ($Item.state -eq 'closed') {
                 $targetStateReason = [string] $rule.state_reason
+                $manualReview = $true
+                $notes.Add("Closed-issue state reason migration is deferred because GitHub only applies state_reason when changing state.")
             }
             else {
                 $manualReview = $true
@@ -162,6 +202,8 @@ function New-Proposal {
 
         if ($rule.ContainsKey('project_status')) {
             $targetProjectStatus = [string] $rule.project_status
+            $manualReview = $true
+            $notes.Add("Project Status migration requires explicit project-item selection and is deferred from automatic apply.")
         }
 
         if (($rule.ContainsKey('preserve_in_ledger') -and $rule.preserve_in_ledger) -or
@@ -199,8 +241,9 @@ function New-Proposal {
         $changes.Add("type:$currentTypeLabel->$proposedType")
     }
 
-    if ($proposedPriority) {
-        $changes.Add("priority:$proposedPriority")
+    if ($proposedPriority -and $proposedPriority -ne $CurrentPriority) {
+        $currentPriorityLabel = if ([string]::IsNullOrWhiteSpace($CurrentPriority)) { '<none>' } else { $CurrentPriority }
+        $changes.Add("priority:$currentPriorityLabel->$proposedPriority")
     }
 
     if ($targetStateReason) {
@@ -227,9 +270,11 @@ function New-Proposal {
         number = [int] $Item.number
         kind = $kind
         state = $Item.state
+        source_updated_at = $Item.updated_at
         url = $Item.html_url
         current_type = $currentType
         proposed_type = $proposedType
+        current_priority = $CurrentPriority
         current_labels = [string]::Join('|', $currentLabels)
         proposed_labels = [string]::Join('|', $sortedTargetLabels)
         remove_labels = [string]::Join('|', $sortedRemovedLabels)
@@ -246,7 +291,7 @@ if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'GitHub CLI (gh) is required.'
 }
 
-$resolvedOutput = [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $OutputDirectory))
+$resolvedOutput = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDirectory)
 New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
 
 $proposals = [System.Collections.Generic.List[object]]::new()
@@ -281,7 +326,11 @@ foreach ($organization in $Organizations) {
         try {
             $items = @(Invoke-GhGet -Endpoint "repos/$organization/$($repository.name)/issues?state=all&per_page=100" -Paginate)
             $repoProposals = @($items | ForEach-Object {
-                New-Proposal -Organization $organization -Repository $repository -Item $_
+                $kind = if ($_.PSObject.Properties.Name -contains 'pull_request' -and $null -ne $_.pull_request) { 'pull_request' } else { 'issue' }
+                $labels = @(Get-LabelNames -Item $_)
+                $currentPriority = Get-IssuePriority -Organization $organization -Repository $repository.name -Number $_.number -Kind $kind -Labels $labels
+
+                New-Proposal -Organization $organization -Repository $repository -Item $_ -CurrentPriority $currentPriority
             })
 
             foreach ($proposal in $repoProposals) {
@@ -324,6 +373,7 @@ $repositoryRows | Export-Csv -NoTypeInformation -Encoding utf8 $repositoriesPath
 $errors | Export-Csv -NoTypeInformation -Encoding utf8 $errorsPath
 
 [ordered]@{
+    plan_schema_version = 2
     generated_at = (Get-Date).ToUniversalTime().ToString('o')
     mode = 'dry-run-read-only'
     standards_version = $standards.version
@@ -369,7 +419,8 @@ $markdown.Add('')
 $markdown.Add('## Safety')
 $markdown.Add('')
 $markdown.Add('This command performs only GitHub GET requests. It contains no apply mode and cannot mutate GitHub data.')
-$markdown.Add('Review the CSV or JSON ledger before building a separate apply command. Manual-review rows must be resolved before apply.')
+$markdown.Add('Review the CSV or JSON ledger before invoking the separate apply command with the plan SHA-256.')
+$markdown.Add('Manual-review rows are skipped without mutation and must be resolved before obsolete label definitions are deleted.')
 $markdown.Add('')
 $markdown.Add('## Artifacts')
 $markdown.Add('')
