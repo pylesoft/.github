@@ -8,7 +8,25 @@ function global:gh {
     $method = if ($methodIndex -ge 0) { $arguments[$methodIndex + 1] } else { 'GET' }
     $endpoint = @($arguments | Where-Object { $_ -match '^(repos|orgs)/' })[0]
     $paginate = $arguments -contains '--slurp'
-    $bodyText = ($input | Out-String).Trim()
+    $inputIndex = [array]::IndexOf($arguments, '--input')
+    $inputSource = if ($inputIndex -ge 0) { $arguments[$inputIndex + 1] } else { $null }
+
+    if ($method -ne 'GET' -and $inputSource -eq '-') {
+        $global:LASTEXITCODE = 1
+        Write-Error 'gh: Problems parsing JSON (HTTP 400)' -ErrorAction Continue
+        return
+    }
+
+    $bodyText = if ($null -ne $inputSource) {
+        $bytes = [System.IO.File]::ReadAllBytes($inputSource)
+        if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+            throw 'Request JSON must be UTF-8 without a byte-order mark.'
+        }
+        [System.Text.Encoding]::UTF8.GetString($bytes).Trim()
+    }
+    else {
+        ($input | Out-String).Trim()
+    }
     $body = if ([string]::IsNullOrWhiteSpace($bodyText)) { $null } else { $bodyText | ConvertFrom-Json }
 
     function Write-Response {

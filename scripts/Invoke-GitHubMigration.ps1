@@ -103,6 +103,7 @@ function Invoke-GhApi {
 
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         $stderrPath = [System.IO.Path]::GetTempFileName()
+        $inputPath = $null
 
         try {
             $arguments = @('api') + $apiHeaders + @('--method', $Method, $Endpoint)
@@ -111,9 +112,11 @@ function Invoke-GhApi {
             }
 
             if ($null -ne $Body) {
-                $arguments += @('--input', '-')
                 $bodyJson = $Body | ConvertTo-Json -Depth 12 -Compress
-                $raw = ($bodyJson | & gh @arguments 2> $stderrPath | Out-String).Trim()
+                $inputPath = [System.IO.Path]::GetTempFileName()
+                [System.IO.File]::WriteAllText($inputPath, $bodyJson, [System.Text.UTF8Encoding]::new($false))
+                $arguments += @('--input', $inputPath)
+                $raw = (& gh @arguments 2> $stderrPath | Out-String).Trim()
             }
             else {
                 $raw = (& gh @arguments 2> $stderrPath | Out-String).Trim()
@@ -124,6 +127,9 @@ function Invoke-GhApi {
         }
         finally {
             Remove-Item $stderrPath -Force -ErrorAction SilentlyContinue
+            if ($null -ne $inputPath) {
+                Remove-Item $inputPath -Force -ErrorAction SilentlyContinue
+            }
         }
 
         if ($exitCode -eq 0) {
