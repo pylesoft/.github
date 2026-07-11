@@ -330,6 +330,39 @@ Describe 'Invoke-GitHubMigration' {
         $summary.verified | Should Be 0
     }
 
+    It 'supports a removal-only pull request with no target labels' {
+        $global:FakeGithub.issue_labels = @('claude-code-assisted')
+        $global:FakeGithub.repository_labels = @(
+            [pscustomobject]@{ name = 'claude-code-assisted'; color = 'ededed'; description = '' }
+        )
+
+        $plan = Get-Content -Raw $script:planPath | ConvertFrom-Json
+        $proposal = $plan.proposals[0]
+        $proposal.kind = 'pull_request'
+        $proposal.current_type = $null
+        $proposal.proposed_type = $null
+        $proposal.current_priority = $null
+        $proposal.current_labels = 'claude-code-assisted'
+        $proposal.proposed_labels = ''
+        $proposal.remove_labels = 'claude-code-assisted'
+        $proposal.proposed_priority = $null
+        $proposal.proposed_changes = 'remove_labels:claude-code-assisted'
+        $plan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $script:planPath
+        $script:planHash = (Get-FileHash -Algorithm SHA256 $script:planPath).Hash
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:applyScript -PlanPath $script:planPath -PlanSha256 $script:planHash -Apply -OutputDirectory $script:outputPath -DelayMilliseconds 0
+        }
+        finally {
+            Pop-Location
+        }
+
+        @($global:FakeGithub.issue_labels).Count | Should Be 0
+        $summary = Get-Content -Raw (Join-Path $script:outputPath "plan-$($script:planHash.Substring(0, 12).ToLowerInvariant())/summary.json") | ConvertFrom-Json
+        $summary.verified | Should Be 1
+    }
+
     It 'resumes an item that stopped after replacement data was verified' {
         $global:FakeGithub.throw_on_delete = $true
 

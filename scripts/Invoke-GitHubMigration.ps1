@@ -392,7 +392,9 @@ function Invoke-ProposalMigration {
 
     $targetLabels = @(ConvertTo-NormalizedLabels $Proposal.proposed_labels)
     $missingTargetLabels = @($targetLabels | Where-Object { $state.labels -notcontains $_ })
-    Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $targetLabels
+    if ($targetLabels.Count -gt 0) {
+        Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $targetLabels
+    }
 
     if ($missingTargetLabels.Count -gt 0) {
         Invoke-GhApi -Method POST -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)/labels" -Body @{ labels = $missingTargetLabels } | Out-Null
