@@ -38,9 +38,22 @@ function Invoke-GhGet {
         $arguments += @('--paginate', '--slurp')
     }
 
-    $raw = (& gh @arguments 2>&1 | Out-String).Trim()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+
+    try {
+        $raw = (& gh @arguments 2> $stderrPath | Out-String).Trim()
+        $stderr = (Get-Content -Raw $stderrPath -ErrorAction SilentlyContinue | Out-String).Trim()
+    }
+    finally {
+        Remove-Item $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+
     if ($LASTEXITCODE -ne 0) {
-        throw "GitHub GET failed for $Endpoint`n$raw"
+        throw "GitHub GET failed for $Endpoint`n$stderr"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($stderr)) {
+        Write-Warning "GitHub CLI warning for ${Endpoint}: $stderr"
     }
 
     if ([string]::IsNullOrWhiteSpace($raw)) {
@@ -138,7 +151,13 @@ function New-Proposal {
         }
 
         if ($kind -eq 'issue' -and $rule.ContainsKey('state_reason')) {
-            $targetStateReason = [string] $rule.state_reason
+            if ($Item.state -eq 'closed') {
+                $targetStateReason = [string] $rule.state_reason
+            }
+            else {
+                $manualReview = $true
+                $notes.Add("Open issue has resolution label '$label'; state_reason cannot be applied until the issue is closed.")
+            }
         }
 
         if ($rule.ContainsKey('project_status')) {
