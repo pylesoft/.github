@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "new_repository_defaults": {
+    "default_branch": "master"
+  },
+  "issue_types": [
+    { "name": "Triage", "description": "New work that has not yet been classified", "color": "purple" },
+    { "name": "Bug", "description": "Confirmed incorrect behavior", "color": "red" },
+    { "name": "Support", "description": "Customer assistance or investigation", "color": "blue" },
+    { "name": "Analysis", "description": "Investigation or design work before implementation", "color": "yellow" },
+    { "name": "Feature", "description": "A new capability or meaningful improvement", "color": "green" },
+    { "name": "Task", "description": "General implementation or operational work", "color": "gray" }
+  ],
+  "labels": [
+    { "name": "bug", "color": "d73a4a", "description": "Confirmed incorrect behavior or its fix" },
+    { "name": "enhancement", "color": "a2eeef", "description": "New capability or meaningful improvement" },
+    { "name": "documentation", "color": "0075ca", "description": "Documentation-only or documentation-focused work" },
+    { "name": "docs-needed", "color": "0e8a16", "description": "Force post-merge documentation follow-up" }
+  ],
+  "legacy_labels": {
+    "bug": { "issue_type": "Bug", "label": "bug" },
+    "feature": { "issue_type": "Feature", "label": "enhancement" },
+    "enhancement": { "issue_type": "Feature", "label": "enhancement" },
+    "analyse": { "issue_type": "Analysis" },
+    "analysis": { "issue_type": "Analysis" },
+    "to analyze": { "issue_type": "Analysis" },
+    "support": { "issue_type": "Support" },
+    "question": { "issue_type": "Support" },
+    "documentation": { "label": "documentation" },
+    "docs": { "label": "documentation" },
+    "urgent": { "priority": "Urgent" },
+    "important": { "priority": "High" },
+    "infra": { "issue_type_if_missing": "Task" },
+    "devops": { "issue_type_if_missing": "Task" },
+    "dependencies": { "issue_type_if_missing": "Task" },
+    "php": { "issue_type_if_missing": "Task" },
+    "javascript": { "issue_type_if_missing": "Task" },
+    "duplicate": { "state_reason": "not_planned", "preserve_in_ledger": true },
+    "invalid": { "state_reason": "not_planned", "preserve_in_ledger": true },
+    "wontfix": { "state_reason": "not_planned", "preserve_in_ledger": true },
+    "can't reproduce": { "state_reason": "not_planned", "preserve_in_ledger": true },
+    "to review": { "project_status": "Code review", "preserve_in_ledger": true },
+    "docs-needed": { "label": "docs-needed" },
+    "docs-skip": { "preserve_in_ledger": true },
+    "good first issue": { "preserve_in_ledger": true },
+    "help wanted": { "preserve_in_ledger": true },
+    "claude-code-assisted": { "preserve_in_ledger": true },
+    "codex": { "preserve_in_ledger": true },
+    "new": { "manual_review": true },
+    "reported": { "manual_review": true },
+    "hold": { "manual_review": true },
+    "closed": { "manual_review": true }
+  }
+}
