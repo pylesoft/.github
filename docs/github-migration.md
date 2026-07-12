@@ -96,3 +96,31 @@ After all approved batches:
 4. Count every obsolete label across open and closed issues and pull requests.
 5. Delete an obsolete repository label definition only when its count is zero.
 6. Run the nightly standards audit and retain the final evidence directory.
+
+## Repository label catalog cleanup
+
+After item migration reports zero remaining automatic changes, generate a separate usage-aware label catalog plan:
+
+```powershell
+./scripts/New-GitHubLabelCatalogDryRun.ps1 `
+    -Organizations pylesoft `
+    -OutputDirectory ./artifacts/pylesoft-label-catalog
+```
+
+This plan creates missing canonical definitions, normalizes their colors and descriptions, and proposes obsolete definitions for deletion only when they have zero issue or pull-request associations.
+
+Apply the reviewed plan by its exact SHA-256:
+
+```powershell
+$plan = './artifacts/pylesoft-label-catalog/github-label-catalog-dry-run-YYYYMMDDTHHMMSSZ.json'
+$sha256 = (Get-FileHash -Algorithm SHA256 $plan).Hash
+
+./scripts/Invoke-GitHubLabelCatalog.ps1 `
+    -PlanPath $plan `
+    -PlanSha256 $sha256 `
+    -Apply `
+    -Organizations pylesoft `
+    -BatchSize 100
+```
+
+The apply command rechecks live usage immediately before every deletion. Any new association, metadata drift, read error, or blocked action stops the batch. Use `-Resume` with the exact same plan and filters after reviewing the event ledger.

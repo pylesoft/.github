@@ -1,6 +1,8 @@
 $script:repositoryRoot = Split-Path $PSScriptRoot -Parent
 $script:applyScript = Join-Path $script:repositoryRoot 'scripts/Invoke-GitHubMigration.ps1'
 $script:dryRunScript = Join-Path $script:repositoryRoot 'scripts/New-GitHubMigrationDryRun.ps1'
+$script:labelCatalogDryRunScript = Join-Path $script:repositoryRoot 'scripts/New-GitHubLabelCatalogDryRun.ps1'
+$script:labelCatalogApplyScript = Join-Path $script:repositoryRoot 'scripts/Invoke-GitHubLabelCatalog.ps1'
 
 function global:gh {
     $arguments = @($args)
@@ -58,6 +60,14 @@ function global:gh {
     }
 
     if ($method -eq 'GET' -and $endpoint -match '^repos/pylesoft/example/issues\?') {
+        if ($endpoint -match '[?&]labels=([^&]+)') {
+            $requestedLabel = [uri]::UnescapeDataString($Matches[1])
+            if ($global:FakeGithub.issue_labels -notcontains $requestedLabel) {
+                Write-Response @()
+                return
+            }
+        }
+
         Write-Response @([pscustomobject]@{
             number = 1
             state = 'open'
@@ -167,6 +177,12 @@ function global:gh {
         $name = [uri]::UnescapeDataString(($endpoint -split '/')[-1])
         $global:FakeGithub.issue_labels = @($global:FakeGithub.issue_labels | Where-Object { $_ -ne $name })
         Touch-Issue
+        return
+    }
+
+    if ($method -eq 'DELETE' -and $endpoint -like 'repos/pylesoft/example/labels/*') {
+        $name = [uri]::UnescapeDataString(($endpoint -split '/')[-1])
+        $global:FakeGithub.repository_labels = @($global:FakeGithub.repository_labels | Where-Object { $_.name -ne $name })
         return
     }
 
@@ -281,6 +297,47 @@ Describe 'Invoke-GitHubMigration' {
         $plan.proposals[0].source_updated_at | Should Be '2026-07-11T12:00:00Z'
         $plan.proposals[0].current_priority | Should Be 'Urgent'
         ($plan.proposals[0].proposed_changes -match 'priority:') | Should Be $false
+    }
+
+    It 'blocks obsolete label deletion while live associations remain' {
+        $labelDryRunOutput = Join-Path $TestDrive 'label-dry-run'
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:labelCatalogDryRunScript -Organizations pylesoft -OutputDirectory $labelDryRunOutput
+        }
+        finally {
+            Pop-Location
+        }
+
+        $planFile = Get-ChildItem -LiteralPath $labelDryRunOutput -Filter '*.json' | Select-Object -First 1
+        $plan = Get-Content -Raw $planFile.FullName | ConvertFrom-Json
+        $plan.summary.repositories | Should Be 1
+        $plan.summary.safe_actions | Should Be 4
+        $plan.summary.blocked_actions | Should Be 2
+        @($plan.actions | Where-Object { $_.action -eq 'blocked_delete' -and $_.usage_count -eq 1 }).Count | Should Be 2
+    }
+
+    It 'applies the canonical label catalog only after zero-use deletion checks' {
+        $global:FakeGithub.issue_labels = @()
+        $labelDryRunOutput = Join-Path $TestDrive 'label-apply-plan'
+        $labelApplyOutput = Join-Path $TestDrive 'label-apply-runs'
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:labelCatalogDryRunScript -Organizations pylesoft -OutputDirectory $labelDryRunOutput
+            $planFile = Get-ChildItem -LiteralPath $labelDryRunOutput -Filter '*.json' | Select-Object -First 1
+            $planHash = (Get-FileHash -Algorithm SHA256 $planFile.FullName).Hash
+            & $script:labelCatalogApplyScript -PlanPath $planFile.FullName -PlanSha256 $planHash -Apply -OutputDirectory $labelApplyOutput -BatchSize 6 -DelayMilliseconds 0
+        }
+        finally {
+            Pop-Location
+        }
+
+        @($global:FakeGithub.repository_labels.name | Sort-Object) | Should Be @('bug', 'docs-needed', 'documentation', 'enhancement')
+        $summary = Get-Content -Raw (Get-ChildItem -LiteralPath $labelApplyOutput -Filter 'summary.json' -Recurse | Select-Object -First 1).FullName | ConvertFrom-Json
+        $summary.verified | Should Be 6
+        $summary.remaining | Should Be 0
     }
 
     It 'rejects a plan whose hash does not match' {
