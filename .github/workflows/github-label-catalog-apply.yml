@@ -1,0 +1,106 @@
+name: Apply GitHub label catalog
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type APPLY to approve catalog mutations
+        required: true
+        type: string
+      repository:
+        description: Optional repository name; leave blank for the full organization
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-label-catalog-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ secrets.GH_STANDARDS_TOKEN }}
+
+    steps:
+      - name: Validate approval and token
+        shell: pwsh
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          if ($env:CONFIRMATION -cne 'APPLY') {
+              throw 'The confirmation input must exactly equal APPLY.'
+          }
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+              throw 'Configure the GH_STANDARDS_TOKEN repository secret before running this workflow.'
+          }
+
+      - uses: actions/checkout@v4
+
+      - name: Generate current label catalog plan
+        shell: pwsh
+        run: |
+          ./scripts/New-GitHubLabelCatalogDryRun.ps1 `
+              -Organizations pylesoft `
+              -OutputDirectory ./artifacts/plan
+
+      - name: Apply verified catalog plan
+        shell: pwsh
+        env:
+          TARGET_REPOSITORY: ${{ inputs.repository }}
+        run: |
+          $planPath = (Get-ChildItem ./artifacts/plan/*.json | Select-Object -First 1).FullName
+          $plan = Get-Content -Raw $planPath | ConvertFrom-Json
+          if ([int] $plan.summary.errors -gt 0 -or [int] $plan.summary.blocked_actions -gt 0) {
+              throw 'The fresh plan contains read errors or blocked actions and cannot be applied.'
+          }
+
+          if ([int] $plan.summary.actions -eq 0) {
+              Write-Host 'The label catalog is already compliant.'
+              exit 0
+          }
+
+          if (-not [string]::IsNullOrWhiteSpace($env:TARGET_REPOSITORY)) {
+              $targetRepository = $env:TARGET_REPOSITORY.Trim()
+              $targetActions = @($plan.actions | Where-Object { $_.repository -ceq $targetRepository })
+              if ($targetActions.Count -eq 0) {
+                  Write-Host "The label catalog for $targetRepository is already compliant."
+                  exit 0
+              }
+          }
+
+          $parameters = @{
+              PlanPath = $planPath
+              PlanSha256 = (Get-FileHash -Algorithm SHA256 $planPath).Hash
+              Apply = $true
+              Organizations = @('pylesoft')
+              BatchSize = 100
+              RunId = "workflow-$env:GITHUB_RUN_ID"
+              OutputDirectory = './artifacts/apply'
+          }
+          if (-not [string]::IsNullOrWhiteSpace($env:TARGET_REPOSITORY)) {
+              $parameters.Repositories = @($targetRepository)
+          }
+
+          $firstInvocation = $true
+          do {
+              if (-not $firstInvocation) {
+                  $parameters.Resume = $true
+              }
+              ./scripts/Invoke-GitHubLabelCatalog.ps1 @parameters
+              $summary = Get-Content -Raw "./artifacts/apply/$($parameters.RunId)/summary.json" | ConvertFrom-Json
+              $firstInvocation = $false
+          } while ([int] $summary.remaining -gt 0)
+
+      - name: Upload apply evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-label-catalog-apply-${{ github.run_id }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 90

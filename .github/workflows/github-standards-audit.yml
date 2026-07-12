@@ -1,0 +1,87 @@
+name: GitHub standards audit
+
+on:
+  schedule:
+    - cron: '17 11 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: github-standards-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ secrets.GH_STANDARDS_TOKEN }}
+
+    steps:
+      - name: Require standards token
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+              throw 'Configure the GH_STANDARDS_TOKEN repository secret before running this workflow.'
+          }
+
+      - uses: actions/checkout@v4
+
+      - name: Audit issue and pull request metadata
+        shell: pwsh
+        run: |
+          ./scripts/New-GitHubMigrationDryRun.ps1 `
+              -Organizations pylesoft `
+              -OutputDirectory ./artifacts/items
+
+      - name: Audit repository label catalogs
+        shell: pwsh
+        run: |
+          ./scripts/New-GitHubLabelCatalogDryRun.ps1 `
+              -Organizations pylesoft `
+              -OutputDirectory ./artifacts/labels
+
+      - name: Summarize drift
+        shell: pwsh
+        run: |
+          $itemPlan = Get-Content -Raw (Get-ChildItem ./artifacts/items/*.json | Select-Object -First 1) | ConvertFrom-Json
+          $labelPlan = Get-Content -Raw (Get-ChildItem ./artifacts/labels/*.json | Select-Object -First 1) | ConvertFrom-Json
+
+          $summary = [ordered]@{
+              generated_at = [datetimeoffset]::UtcNow.ToString('o')
+              item_changes = [int] $itemPlan.summary.items_with_proposed_changes
+              item_manual_review = [int] $itemPlan.summary.manual_review_items
+              item_read_errors = [int] $itemPlan.summary.errors
+              label_actions = [int] $labelPlan.summary.actions
+              label_blocked_actions = [int] $labelPlan.summary.blocked_actions
+              label_read_errors = [int] $labelPlan.summary.errors
+          }
+
+          $summary | ConvertTo-Json | Set-Content -Encoding utf8 ./artifacts/summary.json
+          @"
+          ## GitHub standards audit
+
+          | Check | Count |
+          |---|---:|
+          | Item changes | $($summary.item_changes) |
+          | Manual-review items | $($summary.item_manual_review) |
+          | Item read errors | $($summary.item_read_errors) |
+          | Label catalog actions | $($summary.label_actions) |
+          | Blocked label actions | $($summary.label_blocked_actions) |
+          | Label read errors | $($summary.label_read_errors) |
+          "@ | Add-Content $env:GITHUB_STEP_SUMMARY
+
+          if ($summary.Values | Where-Object { $_ -is [int] -and $_ -gt 0 }) {
+              throw 'GitHub standards drift was detected. Review the uploaded audit artifact.'
+          }
+
+      - name: Upload audit evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-standards-audit-${{ github.run_id }}
+          path: artifacts
+          if-no-files-found: error
+          retention-days: 30
