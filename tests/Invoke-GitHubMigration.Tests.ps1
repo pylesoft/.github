@@ -447,6 +447,34 @@ Describe 'Invoke-GitHubMigration' {
         $summary.verified | Should Be 1
     }
 
+    It 'preserves an existing noncanonical exception label while preparing canonical targets' {
+        $plan = Get-Content -Raw $script:planPath | ConvertFrom-Json
+        $plan.proposals[0].current_labels = 'feature|wontfix'
+        $plan.proposals[0].proposed_labels = 'enhancement|wontfix'
+        $plan.proposals[0].remove_labels = 'feature'
+        $plan.proposals[0].proposed_priority = $null
+        $plan.proposals[0].proposed_changes = 'type:<none>->Feature;add_labels:enhancement;remove_labels:feature'
+        $plan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $script:planPath
+        $script:planHash = (Get-FileHash -Algorithm SHA256 $script:planPath).Hash
+        $global:FakeGithub.issue_labels = @('feature', 'wontfix')
+        $global:FakeGithub.repository_labels = @(
+            [pscustomobject]@{ name = 'feature'; color = 'a2eeef'; description = '' },
+            [pscustomobject]@{ name = 'wontfix'; color = 'ffffff'; description = 'This will not be worked on' }
+        )
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:applyScript -PlanPath $script:planPath -PlanSha256 $script:planHash -Apply -OutputDirectory $script:outputPath -DelayMilliseconds 0
+        }
+        finally {
+            Pop-Location
+        }
+
+        $global:FakeGithub.type | Should Be 'Feature'
+        @($global:FakeGithub.issue_labels) | Should Be @('enhancement', 'wontfix')
+        @($global:FakeGithub.repository_labels.name | Sort-Object) | Should Be @('enhancement', 'feature', 'wontfix')
+    }
+
     It 'resumes an item after an atomic update was applied before its response was received' {
         $global:FakeGithub.throw_after_issue_patch = $true
 

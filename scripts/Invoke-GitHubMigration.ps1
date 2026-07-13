@@ -407,8 +407,18 @@ function Invoke-ProposalMigration {
     $targetLabels = @(ConvertTo-NormalizedLabels $Proposal.proposed_labels)
     $missingTargetLabels = @($targetLabels | Where-Object { $state.labels -notcontains $_ })
     $removedLegacyLabels = @(ConvertTo-NormalizedLabels $Proposal.remove_labels | Where-Object { $state.labels -contains $_ })
-    if ($targetLabels.Count -gt 0) {
-        Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $targetLabels
+    $canonicalTargetLabels = @($targetLabels | Where-Object {
+        $targetLabel = $_
+        @($script:standards.labels | Where-Object { $_.name -eq $targetLabel }).Count -eq 1
+    })
+    $preservedNoncanonicalLabels = @($targetLabels | Where-Object { $canonicalTargetLabels -notcontains $_ })
+    foreach ($label in $preservedNoncanonicalLabels) {
+        if ($state.labels -notcontains $label) {
+            throw "Noncanonical target label '$label' is not already associated with $key and cannot be created by the migration."
+        }
+    }
+    if ($canonicalTargetLabels.Count -gt 0) {
+        Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $canonicalTargetLabels
     }
 
     $issueBody = [ordered]@{}
