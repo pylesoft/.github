@@ -1,7 +1,5 @@
 # Pylesoft GitHub standards
 
-This repository is the organization-wide home for shared GitHub templates, standards, and governance automation.
+This repository is the organization-wide home for shared GitHub templates and standards.
 
-Changes to standards are reviewed through pull requests. Organization Settings provision the default labels, branch name, and native issue types for new repositories.
-
-See [GitHub label standards audit](docs/github-standards-enforcement.md) for the nightly read-only drift check and authentication requirements.
+The canonical label, issue type, and new-repository branch configuration is documented in [`standards/github-standards.json`](standards/github-standards.json). Organization Settings in Pylesoft and FloorBox are the source of truth for applying those defaults to new repositories.
