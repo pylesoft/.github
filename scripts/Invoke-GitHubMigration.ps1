@@ -404,14 +404,24 @@ function Invoke-ProposalMigration {
 
     Write-RunEvent -Status 'item_started' -Proposal $Proposal -Details @{ resumed = $Started }
 
+    $targetLabels = @(ConvertTo-NormalizedLabels $Proposal.proposed_labels)
+    $missingTargetLabels = @($targetLabels | Where-Object { $state.labels -notcontains $_ })
+    $removedLegacyLabels = @(ConvertTo-NormalizedLabels $Proposal.remove_labels | Where-Object { $state.labels -contains $_ })
+    if ($targetLabels.Count -gt 0) {
+        Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $targetLabels
+    }
+
+    $issueBody = [ordered]@{}
     if ($Proposal.kind -eq 'issue' -and -not [string]::IsNullOrWhiteSpace([string] $Proposal.proposed_type) -and
         -not (Test-StringEqual $state.type ([string] $Proposal.proposed_type))) {
-        Invoke-GhApi -Method PATCH -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)" -Body @{ type = [string] $Proposal.proposed_type } | Out-Null
-        $state = Get-IssueState $Proposal
-        if (-not (Test-StringEqual $state.type ([string] $Proposal.proposed_type))) {
-            throw "Issue type did not converge to '$($Proposal.proposed_type)'."
-        }
-        Write-RunEvent -Status 'type_verified' -Proposal $Proposal -Details @{ type = $state.type }
+        $issueBody.type = [string] $Proposal.proposed_type
+    }
+    if (-not (Test-SetEqual $state.labels $targetLabels)) {
+        $issueBody.labels = $targetLabels
+    }
+
+    if ($issueBody.Count -gt 0) {
+        Invoke-GhApi -Method PATCH -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)" -Body $issueBody | Out-Null
     }
 
     if ($Proposal.kind -eq 'issue' -and -not [string]::IsNullOrWhiteSpace([string] $Proposal.proposed_priority) -and
@@ -419,41 +429,6 @@ function Invoke-ProposalMigration {
         $priorityFieldId = Get-PriorityFieldId $Proposal.organization
         $priorityBody = @{ issue_field_values = @(@{ field_id = $priorityFieldId; value = [string] $Proposal.proposed_priority }) }
         Invoke-GhApi -Method POST -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)/issue-field-values" -Body $priorityBody | Out-Null
-        $state = Get-IssueState $Proposal
-        if (-not (Test-StringEqual $state.priority ([string] $Proposal.proposed_priority))) {
-            throw "Priority did not converge to '$($Proposal.proposed_priority)'."
-        }
-        Write-RunEvent -Status 'priority_verified' -Proposal $Proposal -Details @{ priority = $state.priority }
-    }
-
-    $targetLabels = @(ConvertTo-NormalizedLabels $Proposal.proposed_labels)
-    $missingTargetLabels = @($targetLabels | Where-Object { $state.labels -notcontains $_ })
-    if ($targetLabels.Count -gt 0) {
-        Ensure-CanonicalLabels -Organization $Proposal.organization -Repository $Proposal.repository -Names $targetLabels
-    }
-
-    if ($missingTargetLabels.Count -gt 0) {
-        Invoke-GhApi -Method POST -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)/labels" -Body @{ labels = $missingTargetLabels } | Out-Null
-        $state = Get-IssueState $Proposal
-        $unverifiedAdds = @($missingTargetLabels | Where-Object { $state.labels -notcontains $_ })
-        if ($unverifiedAdds.Count -gt 0) {
-            throw "Replacement labels did not converge: $([string]::Join(', ', $unverifiedAdds))."
-        }
-        Write-RunEvent -Status 'replacement_labels_verified' -Proposal $Proposal -Details @{ labels = $missingTargetLabels }
-    }
-
-    foreach ($label in @(ConvertTo-NormalizedLabels $Proposal.remove_labels)) {
-        if ($state.labels -notcontains $label) {
-            continue
-        }
-
-        $encodedLabel = [uri]::EscapeDataString($label)
-        Invoke-GhApi -Method DELETE -Endpoint "repos/$($Proposal.organization)/$($Proposal.repository)/issues/$($Proposal.number)/labels/$encodedLabel" | Out-Null
-        $state = Get-IssueState $Proposal
-        if ($state.labels -contains $label) {
-            throw "Legacy label '$label' was still present after removal."
-        }
-        Write-RunEvent -Status 'legacy_label_removal_verified' -Proposal $Proposal -Details @{ label = $label }
     }
 
     $state = Get-IssueState $Proposal
@@ -465,6 +440,20 @@ function Invoke-ProposalMigration {
     }
     if (-not (Test-SetEqual $state.labels $targetLabels)) {
         throw "Final label verification failed; expected '$([string]::Join('|', $targetLabels))', got '$([string]::Join('|', $state.labels))'."
+    }
+
+    if ($Proposal.kind -eq 'issue' -and $issueBody.Contains('type')) {
+        Write-RunEvent -Status 'type_verified' -Proposal $Proposal -Details @{ type = $state.type }
+    }
+    if ($Proposal.kind -eq 'issue' -and -not [string]::IsNullOrWhiteSpace([string] $Proposal.proposed_priority) -and
+        -not (Test-StringEqual ([string] $Proposal.current_priority) ([string] $Proposal.proposed_priority))) {
+        Write-RunEvent -Status 'priority_verified' -Proposal $Proposal -Details @{ priority = $state.priority }
+    }
+    if ($missingTargetLabels.Count -gt 0) {
+        Write-RunEvent -Status 'replacement_labels_verified' -Proposal $Proposal -Details @{ labels = $missingTargetLabels }
+    }
+    foreach ($label in $removedLegacyLabels) {
+        Write-RunEvent -Status 'legacy_label_removal_verified' -Proposal $Proposal -Details @{ label = $label }
     }
 
     $state | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $afterPath

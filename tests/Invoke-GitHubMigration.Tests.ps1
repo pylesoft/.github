@@ -131,7 +131,13 @@ function global:gh {
         if ($body.PSObject.Properties.Name -contains 'type') {
             $global:FakeGithub.type = [string] $body.type
         }
+        if ($body.PSObject.Properties.Name -contains 'labels') {
+            $global:FakeGithub.issue_labels = @($body.labels)
+        }
         Touch-Issue
+        if ($global:FakeGithub.throw_after_issue_patch) {
+            throw 'Simulated lost response after the atomic issue update was applied.'
+        }
         Write-Response @{ ok = $true }
         return
     }
@@ -247,6 +253,7 @@ Describe 'Invoke-GitHubMigration' {
             updated_at = '2026-07-11T12:00:00Z'
             sequence = 0
             throw_on_delete = $false
+            throw_after_issue_patch = $false
         }
 
         $script:planPath = Join-Path $TestDrive 'plan.json'
@@ -420,13 +427,13 @@ Describe 'Invoke-GitHubMigration' {
         $summary.verified | Should Be 1
     }
 
-    It 'resumes an item that stopped after replacement data was verified' {
-        $global:FakeGithub.throw_on_delete = $true
+    It 'resumes an item after an atomic update was applied before its response was received' {
+        $global:FakeGithub.throw_after_issue_patch = $true
 
         Push-Location $script:repositoryRoot
         try {
             { & $script:applyScript -PlanPath $script:planPath -PlanSha256 $script:planHash -Apply -OutputDirectory $script:outputPath -DelayMilliseconds 0 *> $null } | Should Throw
-            $global:FakeGithub.throw_on_delete = $false
+            $global:FakeGithub.throw_after_issue_patch = $false
             & $script:applyScript -PlanPath $script:planPath -PlanSha256 $script:planHash -Apply -OutputDirectory $script:outputPath -DelayMilliseconds 0 -Resume
         }
         finally {

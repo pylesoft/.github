@@ -48,13 +48,10 @@ Select one low-risk repository and a small batch:
 
 The command checks for post-plan drift before the first mutation. For each item it:
 
-1. Saves the before state.
-2. Applies and verifies the native issue type.
-3. Adds and verifies Priority without replacing unrelated issue fields.
-4. Creates or normalizes required canonical label definitions.
-5. Adds and verifies replacement labels.
-6. Removes legacy labels one at a time, verifying every removal.
-7. Re-reads the complete target state and saves the after state.
+- Saves the before state and ensures canonical replacement label definitions exist.
+- Applies native type and the complete final label set atomically through one issue update.
+- Applies Priority separately when required by GitHub's organization issue-field API.
+- Reads the final state once, saves the after state, and records verification evidence for every migrated field and removed legacy label.
 
 The run directory contains the immutable run manifest, event checkpoint ledger, before/after item snapshots, label-definition backups, and the latest summary.
 
