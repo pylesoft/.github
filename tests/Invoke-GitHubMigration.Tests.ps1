@@ -441,6 +441,47 @@ Describe 'Invoke-GitHubMigration' {
         $summary.remaining | Should Be 0
     }
 
+    It 'assigns every proposal to exactly one deterministic shard' {
+        New-TestPlan -Path $script:planPath -ManualReview
+        $plan = Get-Content -Raw $script:planPath | ConvertFrom-Json
+        $template = $plan.proposals[0]
+        $plan.proposals = @(1..256 | ForEach-Object {
+            $proposal = $template.PSObject.Copy()
+            $proposal.number = $_
+            $proposal.url = "https://github.com/pylesoft/example/issues/$_"
+            $proposal
+        })
+        $plan.summary.items = 256
+        $plan.summary.items_with_proposed_changes = 256
+        $plan.summary.manual_review_items = 256
+        $plan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $script:planPath
+        $script:planHash = (Get-FileHash -Algorithm SHA256 $script:planPath).Hash
+
+        Push-Location $script:repositoryRoot
+        try {
+            0..3 | ForEach-Object {
+                & $script:applyScript -PlanPath $script:planPath -PlanSha256 $script:planHash -Apply `
+                    -OutputDirectory $script:outputPath -RunId "shard-$_" -ShardCount 4 -ShardIndex $_ -DelayMilliseconds 0
+            }
+        }
+        finally {
+            Pop-Location
+        }
+
+        $events = Get-ChildItem -LiteralPath $script:outputPath -Directory -Filter 'shard-*' |
+            ForEach-Object { Get-Content (Join-Path $_.FullName 'events.jsonl') } |
+            ForEach-Object { $_ | ConvertFrom-Json } |
+            Where-Object status -eq 'manual_review_skipped'
+        @($events).Count | Should Be 256
+        @($events.key | Sort-Object -Unique).Count | Should Be 256
+
+        0..3 | ForEach-Object {
+            $manifest = Get-Content -Raw (Join-Path $script:outputPath "shard-$_/run-manifest.json") | ConvertFrom-Json
+            $manifest.shard_count | Should Be 4
+            $manifest.shard_index | Should Be $_
+        }
+    }
+
     AfterAll {
         Remove-Item Function:\global:gh -ErrorAction SilentlyContinue
         Remove-Variable FakeGithub -Scope Global -ErrorAction SilentlyContinue

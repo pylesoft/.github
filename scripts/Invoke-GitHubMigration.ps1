@@ -5,6 +5,8 @@ param(
     [Parameter(Mandatory)] [switch] $Apply,
     [string[]] $Organizations,
     [string[]] $Repositories,
+    [ValidateRange(1, 64)] [int] $ShardCount = 1,
+    [ValidateRange(0, 63)] [int] $ShardIndex = 0,
     [ValidateRange(1, 100)] [int] $BatchSize = 25,
     [ValidateRange(1, 168)] [int] $MaxPlanAgeHours = 24,
     [string] $OutputDirectory = './artifacts/github-migration-apply',
@@ -65,6 +67,29 @@ function Get-ProposalKey {
     param([Parameter(Mandatory)] [object] $Proposal)
 
     return "$($Proposal.organization)/$($Proposal.repository)#$($Proposal.number)"
+}
+
+function Get-ProposalShardIndex {
+    param(
+        [Parameter(Mandatory)] [object] $Proposal,
+        [Parameter(Mandatory)] [int] $Count
+    )
+
+    $keyBytes = [System.Text.Encoding]::UTF8.GetBytes((Get-ProposalKey $Proposal).ToLowerInvariant())
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($keyBytes)
+    }
+    finally {
+        $sha256.Dispose()
+    }
+
+    [uint64] $value = ([uint64] $hash[0] -shl 24) -bor
+        ([uint64] $hash[1] -shl 16) -bor
+        ([uint64] $hash[2] -shl 8) -bor
+        [uint64] $hash[3]
+
+    return [int] ($value % $Count)
 }
 
 function Test-StringEqual {
@@ -325,8 +350,19 @@ function Ensure-CanonicalLabels {
         }
 
         if ($existing.Count -eq 0) {
-            Invoke-GhApi -Method POST -Endpoint "repos/$Organization/$Repository/labels" -Body $body | Out-Null
-            Write-RunEvent -Status 'label_definition_created' -Proposal $null -Details @{ repository = $repositoryKey; label = $name }
+            try {
+                Invoke-GhApi -Method POST -Endpoint "repos/$Organization/$Repository/labels" -Body $body | Out-Null
+                Write-RunEvent -Status 'label_definition_created' -Proposal $null -Details @{ repository = $repositoryKey; label = $name }
+            }
+            catch {
+                $concurrentLabels = @(Invoke-GhApi -Endpoint "repos/$Organization/$Repository/labels?per_page=100" -Paginate)
+                $concurrentLabel = @($concurrentLabels | Where-Object { $_.name -eq $name })
+                if ($concurrentLabel.Count -ne 1 -or $concurrentLabel[0].color -ne $body.color -or
+                    [string] $concurrentLabel[0].description -ne [string] $body.description) {
+                    throw
+                }
+                Write-RunEvent -Status 'label_definition_converged_concurrently' -Proposal $null -Details @{ repository = $repositoryKey; label = $name }
+            }
         }
         elseif ($existing[0].color -ne $body.color -or [string] $existing[0].description -ne $body.description) {
             $encodedName = [uri]::EscapeDataString($name)
@@ -439,6 +475,10 @@ if (-not $Apply) {
     throw 'This script mutates GitHub. Pass -Apply together with the reviewed plan SHA-256 to acknowledge that intent.'
 }
 
+if ($ShardIndex -ge $ShardCount) {
+    throw "ShardIndex must be less than ShardCount (received index $ShardIndex for $ShardCount shard(s))."
+}
+
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
     throw 'GitHub CLI (gh) is required.'
 }
@@ -497,6 +537,8 @@ $proposals = @($plan.proposals | Where-Object {
     $selectedOrganizations -contains $_.organization.ToLowerInvariant() -and
     ($selectedRepositories.Count -eq 0 -or $selectedRepositories -contains $_.repository.ToLowerInvariant()) -and
     -not [string]::IsNullOrWhiteSpace([string] $_.proposed_changes)
+} | Where-Object {
+    (Get-ProposalShardIndex -Proposal $_ -Count $ShardCount) -eq $ShardIndex
 } | Sort-Object organization, repository, number)
 
 if ($proposals.Count -eq 0) {
@@ -547,6 +589,9 @@ if ($Resume) {
     if (-not (Test-SetEqual @($runManifest.repositories) $selectedRepositories)) {
         throw 'Resume repository filters do not match the original run manifest.'
     }
+    if ([int] $runManifest.shard_count -ne $ShardCount -or [int] $runManifest.shard_index -ne $ShardIndex) {
+        throw 'Resume shard settings do not match the original run manifest.'
+    }
 }
 else {
     [ordered]@{
@@ -556,6 +601,8 @@ else {
         standards_version = $script:standards.version
         organizations = $selectedOrganizations
         repositories = $selectedRepositories
+        shard_count = $ShardCount
+        shard_index = $ShardIndex
         batch_size = $BatchSize
     } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $manifestPath
 }

@@ -75,6 +75,8 @@ After reviewing the canary evidence, repeat the exact command with `-Resume`. Ea
 
 A failed item stops the batch by default. Correct the permission, API, or data issue and use `-Resume`; verified items are not repeated, while partially completed items converge idempotently from their recorded state. Organization and repository filters cannot change within a run.
 
+For large plans, independent workers may use `-ShardCount` with a unique zero-based `-ShardIndex` and `-RunId`. Sharding deterministically assigns each organization/repository/number key to exactly one worker while preserving the same plan hash, drift checks, locks, checkpoints, and final verification. Shard settings cannot change when a run is resumed. Keep concurrency within the GitHub token's API limits.
+
 ## Deferred rows
 
 The automatic apply path intentionally skips:
