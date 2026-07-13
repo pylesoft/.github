@@ -2,8 +2,6 @@
 
 This repository is the organization-wide home for shared GitHub templates, standards, and governance automation.
 
-Changes to standards are reviewed through pull requests. Historical issue, pull request, label, and repository migrations must run in dry-run mode first and require explicit approval before apply mode is enabled.
+Changes to standards are reviewed through pull requests. Organization Settings provision the default labels, branch name, and native issue types for new repositories.
 
-See [GitHub migration runbook](docs/github-migration.md) for the guarded dry-run, canary, batch, resume, and reconciliation workflow.
-
-See [GitHub standards enforcement](docs/github-standards-enforcement.md) for nightly drift auditing, authentication requirements, and owner-approved label repair.
+See [GitHub label standards audit](docs/github-standards-enforcement.md) for the nightly read-only drift check and authentication requirements.
