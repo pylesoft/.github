@@ -367,6 +367,30 @@ Describe 'Invoke-GitHubMigration' {
         $summary.remaining | Should Be 0
     }
 
+    It 'requires acknowledgement before applying safe catalog actions beside blocked exceptions' {
+        $labelDryRunOutput = Join-Path $TestDrive 'label-blocked-apply-plan'
+        $labelApplyOutput = Join-Path $TestDrive 'label-blocked-apply-runs'
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:labelCatalogDryRunScript -Organizations pylesoft -OutputDirectory $labelDryRunOutput
+            $planFile = Get-ChildItem -LiteralPath $labelDryRunOutput -Filter '*.json' | Select-Object -First 1
+            $planHash = (Get-FileHash -Algorithm SHA256 $planFile.FullName).Hash
+            { & $script:labelCatalogApplyScript -PlanPath $planFile.FullName -PlanSha256 $planHash -Apply -OutputDirectory $labelApplyOutput -DelayMilliseconds 0 } | Should Throw
+            & $script:labelCatalogApplyScript -PlanPath $planFile.FullName -PlanSha256 $planHash -Apply `
+                -ApplySafeActionsWithBlockedExceptions -OutputDirectory $labelApplyOutput -BatchSize 100 -DelayMilliseconds 0
+        }
+        finally {
+            Pop-Location
+        }
+
+        @($global:FakeGithub.repository_labels.name | Sort-Object) | Should Be @('bug', 'docs-needed', 'documentation', 'enhancement', 'feature', 'urgent')
+        $summary = Get-Content -Raw (Get-ChildItem -LiteralPath $labelApplyOutput -Filter 'summary.json' -Recurse | Select-Object -First 1).FullName | ConvertFrom-Json
+        $summary.verified | Should Be 4
+        $summary.remaining | Should Be 0
+        $summary.blocked_actions_skipped | Should Be 2
+    }
+
     It 'rejects a plan whose hash does not match' {
         Push-Location $script:repositoryRoot
         try {

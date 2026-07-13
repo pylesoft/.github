@@ -10,6 +10,7 @@ param(
     [string] $OutputDirectory = './artifacts/github-label-catalog-apply',
     [string] $RunId,
     [switch] $Resume,
+    [switch] $ApplySafeActionsWithBlockedExceptions,
     [ValidateRange(0, 10000)] [int] $DelayMilliseconds = 250
 )
 
@@ -234,13 +235,22 @@ $plan = Get-Content -Raw -LiteralPath $resolvedPlanPath | ConvertFrom-Json
 if ($plan.plan_schema_version -ne 1 -or $plan.mode -ne 'label-catalog-dry-run-read-only') { throw 'Unsupported label catalog plan.' }
 $planAge = [datetimeoffset]::UtcNow - [datetimeoffset]::Parse([string] $plan.generated_at).ToUniversalTime()
 if ($planAge.TotalMinutes -lt -5 -or $planAge.TotalHours -gt $MaxPlanAgeHours) { throw 'Label catalog plan is stale; generate and review a fresh dry run.' }
-if (@($plan.errors).Count -gt 0 -or @($plan.actions | Where-Object { -not $_.safe_to_apply }).Count -gt 0) { throw 'Plan contains read errors or blocked actions.' }
+if (@($plan.errors).Count -gt 0) { throw 'Plan contains read errors.' }
 
 [string[]] $selectedOrganizations = @()
 if ($null -ne $Organizations) { $selectedOrganizations = @(ConvertTo-NormalizedSet $Organizations) }
 if ($selectedOrganizations.Length -eq 0) { $selectedOrganizations = @(ConvertTo-NormalizedSet $plan.organizations) }
 [string[]] $selectedRepositories = @()
 if ($null -ne $Repositories) { $selectedRepositories = @(ConvertTo-NormalizedSet $Repositories) }
+
+$blockedActions = @($plan.actions | Where-Object {
+    $selectedOrganizations -contains $_.organization.ToLowerInvariant() -and
+    ($selectedRepositories.Length -eq 0 -or $selectedRepositories -contains $_.repository.ToLowerInvariant()) -and
+    -not $_.safe_to_apply
+})
+if ($blockedActions.Count -gt 0 -and -not $ApplySafeActionsWithBlockedExceptions) {
+    throw 'The selected scope contains blocked actions. Pass -ApplySafeActionsWithBlockedExceptions to apply only its independently safe actions.'
+}
 
 $actions = @($plan.actions | Where-Object {
     $selectedOrganizations -contains $_.organization.ToLowerInvariant() -and
@@ -276,7 +286,10 @@ try {
         $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
         if (-not (Test-StringEqual ([string] $manifest.plan_sha256) $actualHash) -or
             -not (Test-SetEqual @($manifest.organizations) $selectedOrganizations) -or
-            -not (Test-SetEqual @($manifest.repositories) $selectedRepositories)) { throw 'Resume filters or plan hash do not match the original run.' }
+            -not (Test-SetEqual @($manifest.repositories) $selectedRepositories) -or
+            [bool] $manifest.apply_safe_actions_with_blocked_exceptions -ne [bool] $ApplySafeActionsWithBlockedExceptions) {
+            throw 'Resume filters, blocked-exception acknowledgement, or plan hash do not match the original run.'
+        }
     }
     else {
         [ordered]@{
@@ -285,6 +298,8 @@ try {
             plan_sha256 = $actualHash
             organizations = $selectedOrganizations
             repositories = $selectedRepositories
+            apply_safe_actions_with_blocked_exceptions = [bool] $ApplySafeActionsWithBlockedExceptions
+            blocked_actions_skipped = $blockedActions.Count
         } | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 $manifestPath
     }
 
@@ -315,6 +330,7 @@ try {
         selected_actions = $actions.Count
         verified = @($actions | Where-Object { $finalCompleted -contains (Get-ActionKey $_) }).Count
         remaining = $remaining.Count
+        blocked_actions_skipped = $blockedActions.Count
         failures_this_invocation = $failures
     }
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $runRoot 'summary.json')
