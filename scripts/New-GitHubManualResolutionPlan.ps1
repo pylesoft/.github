@@ -39,7 +39,37 @@ foreach ($proposal in @($sourcePlan.proposals | Where-Object { [bool] $_.manual_
     $decision = $null
 
     if ($resolved.notes -match 'Closed-issue state reason|resolution label') {
-        $decision = 'Deferred: preserve the resolution label because GitHub ignores state_reason unless state changes.'
+        $preservedResolutionLabels = @([regex]::Matches([string] $resolved.notes, "Preserve legacy label '(.+?)' in the migration ledger\.") |
+            ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+        $currentLabels = @([string] $resolved.current_labels -split '\|' | Where-Object { $_ })
+        $targetLabels = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $removeLabels = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        @([string] $resolved.proposed_labels -split '\|' | Where-Object { $_ }) | ForEach-Object { $targetLabels.Add($_) | Out-Null }
+        @([string] $resolved.remove_labels -split '\|' | Where-Object { $_ }) | ForEach-Object { $removeLabels.Add($_) | Out-Null }
+        foreach ($label in $preservedResolutionLabels) {
+            $targetLabels.Add($label) | Out-Null
+            $removeLabels.Remove($label) | Out-Null
+        }
+
+        $resolved.proposed_state_reason = $null
+        $resolved.proposed_labels = [string]::Join('|', @($targetLabels | Sort-Object))
+        $resolved.remove_labels = [string]::Join('|', @($removeLabels | Sort-Object))
+        $changes = @($changes | Where-Object { $_ -notmatch '^(state_reason:|(add|remove)_labels:)' })
+        $addedLabels = @($targetLabels | Where-Object { $currentLabels -notcontains $_ } | Sort-Object)
+        if ($addedLabels.Count -gt 0) {
+            $changes += "add_labels:$([string]::Join('|', $addedLabels))"
+        }
+        if ($removeLabels.Count -gt 0) {
+            $changes += "remove_labels:$([string]::Join('|', @($removeLabels | Sort-Object)))"
+        }
+
+        if ($changes.Count -gt 0) {
+            $resolved.manual_review = $false
+            $decision = 'Partially resolved: apply unrelated safe changes while preserving the resolution label and deferring state_reason.'
+        }
+        else {
+            $decision = 'Deferred: preserve the resolution label because GitHub ignores state_reason unless state changes.'
+        }
     }
     elseif (-not [string]::IsNullOrWhiteSpace([string] $resolved.proposed_project_status)) {
         if (-not $confirmedDoneUrls.Contains([string] $resolved.url)) {

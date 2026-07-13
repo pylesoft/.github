@@ -533,7 +533,16 @@ Describe 'Invoke-GitHubMigration' {
         $resolution = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
         $resolution.number = 2
         $resolution.url = 'https://github.com/pylesoft/example/issues/2'
-        $resolution.notes = 'Closed-issue state reason cannot be changed safely; preserve resolution label.'
+        $resolution.current_type = 'Feature'
+        $resolution.proposed_type = 'Feature'
+        $resolution.current_priority = $null
+        $resolution.proposed_priority = $null
+        $resolution.current_labels = 'wontfix'
+        $resolution.proposed_labels = ''
+        $resolution.remove_labels = 'wontfix'
+        $resolution.proposed_state_reason = 'not_planned'
+        $resolution.proposed_changes = 'state_reason:not_planned;remove_labels:wontfix'
+        $resolution.notes = "Closed-issue state reason cannot be changed safely. Preserve legacy label 'wontfix' in the migration ledger."
 
         $projectStatus = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
         $projectStatus.number = 3
@@ -570,6 +579,35 @@ Describe 'Invoke-GitHubMigration' {
         @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_project_status | Should BeNullOrEmpty
         @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_changes | Should Not Match 'project_status:'
         @($result.proposals | Where-Object url -eq $resolution.url)[0].manual_review | Should Be $true
+    }
+
+    It 'applies safe label migration while preserving a resolution-label exception' {
+        $sourcePlanPath = Join-Path $TestDrive 'partial-resolution-plan.json'
+        $resolutionOutput = Join-Path $TestDrive 'partial-resolution-output'
+        New-TestPlan -Path $sourcePlanPath -ManualReview
+        $sourcePlan = Get-Content -Raw $sourcePlanPath | ConvertFrom-Json
+        $sourcePlan.proposals[0].current_type = $null
+        $sourcePlan.proposals[0].proposed_type = 'Feature'
+        $sourcePlan.proposals[0].current_priority = $null
+        $sourcePlan.proposals[0].proposed_priority = $null
+        $sourcePlan.proposals[0].current_labels = "can't reproduce|feature"
+        $sourcePlan.proposals[0].proposed_labels = 'enhancement'
+        $sourcePlan.proposals[0].remove_labels = "can't reproduce|feature"
+        $sourcePlan.proposals[0].proposed_state_reason = 'not_planned'
+        $sourcePlan.proposals[0].proposed_changes = "type:<none>->Feature;state_reason:not_planned;add_labels:enhancement;remove_labels:can't reproduce|feature"
+        $sourcePlan.proposals[0].notes = "Closed-issue state reason migration is deferred. Preserve legacy label 'can't reproduce' in the migration ledger."
+        $sourcePlan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $sourcePlanPath
+
+        & $script:manualResolutionScript -SourcePlanPath $sourcePlanPath -OutputDirectory $resolutionOutput
+
+        $resultPath = Get-ChildItem $resolutionOutput -Filter '*.json' | Select-Object -First 1 -ExpandProperty FullName
+        $proposal = (Get-Content -Raw $resultPath | ConvertFrom-Json).proposals[0]
+        $proposal.manual_review | Should Be $false
+        $proposal.proposed_state_reason | Should BeNullOrEmpty
+        $proposal.proposed_labels | Should Be "can't reproduce|enhancement"
+        $proposal.remove_labels | Should Be 'feature'
+        $proposal.proposed_changes | Should Not Match 'state_reason:'
+        $proposal.proposed_changes | Should Match 'remove_labels:feature'
     }
 
     It 'removes the incompatible canonical label after resolving a type conflict' {
