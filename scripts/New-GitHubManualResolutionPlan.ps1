@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)] [string] $OutputDirectory,
     [string[]] $TypePrecedence = @('Bug', 'Feature', 'Task', 'Support'),
     [string[]] $PriorityPrecedence = @('Urgent', 'High', 'Normal', 'Low'),
+    [hashtable] $TypeLabels = @{ Bug = 'bug'; Feature = 'enhancement' },
     [string[]] $ConfirmedDoneProjectUrls = @()
 )
 
@@ -60,8 +61,44 @@ foreach ($proposal in @($sourcePlan.proposals | Where-Object { [bool] $_.manual_
         $changes = @($changes | Where-Object { $_ -notmatch '^type:' })
         $changes = @("type:$($resolved.current_type)->$($selectedType[0])") + $changes
         $resolved.proposed_type = $selectedType[0]
+
+        $currentLabels = @([string] $resolved.current_labels -split '\|' | Where-Object { $_ })
+        $targetLabels = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $removeLabels = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        @([string] $resolved.proposed_labels -split '\|' | Where-Object { $_ }) | ForEach-Object { $targetLabels.Add($_) | Out-Null }
+        @([string] $resolved.remove_labels -split '\|' | Where-Object { $_ }) | ForEach-Object { $removeLabels.Add($_) | Out-Null }
+
+        foreach ($candidate in $candidates) {
+            if (-not $TypeLabels.ContainsKey($candidate)) {
+                continue
+            }
+
+            $candidateLabel = [string] $TypeLabels[$candidate]
+            if ($candidate -eq $selectedType[0]) {
+                $targetLabels.Add($candidateLabel) | Out-Null
+                $removeLabels.Remove($candidateLabel) | Out-Null
+            }
+            else {
+                $targetLabels.Remove($candidateLabel) | Out-Null
+                if ($currentLabels -contains $candidateLabel) {
+                    $removeLabels.Add($candidateLabel) | Out-Null
+                }
+            }
+        }
+
+        $resolved.proposed_labels = [string]::Join('|', @($targetLabels | Sort-Object))
+        $resolved.remove_labels = [string]::Join('|', @($removeLabels | Sort-Object))
+        $changes = @($changes | Where-Object { $_ -notmatch '^(add|remove)_labels:' })
+        $addedLabels = @($targetLabels | Where-Object { $currentLabels -notcontains $_ } | Sort-Object)
+        if ($addedLabels.Count -gt 0) {
+            $changes += "add_labels:$([string]::Join('|', $addedLabels))"
+        }
+        if ($removeLabels.Count -gt 0) {
+            $changes += "remove_labels:$([string]::Join('|', @($removeLabels | Sort-Object)))"
+        }
+
         $resolved.manual_review = $false
-        $decision = "Resolved issue type conflict using precedence: $($selectedType[0])."
+        $decision = "Resolved issue type conflict using precedence: $($selectedType[0]); incompatible canonical type labels removed."
     }
     elseif ($resolved.notes -match 'Conflicting Priority candidates: ([^.]+)\.') {
         $candidates = @($Matches[1] -split ',' | ForEach-Object { $_.Trim() })
@@ -106,6 +143,7 @@ $plan = [ordered]@{
     source_plan_sha256 = $sourcePlanSha256
     resolution_policy = [ordered]@{
         type_precedence = $TypePrecedence
+        type_labels = $TypeLabels
         priority_precedence = $PriorityPrecedence
         confirmed_done_project_urls = @($ConfirmedDoneProjectUrls)
         resolution_state_reason = 'deferred-with-label-preserved'

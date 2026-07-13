@@ -524,6 +524,10 @@ Describe 'Invoke-GitHubMigration' {
         $typeConflict = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
         $typeConflict.url = 'https://github.com/pylesoft/example/issues/1'
         $typeConflict.proposed_type = $null
+        $typeConflict.current_labels = 'bug|enhancement'
+        $typeConflict.proposed_labels = 'bug|enhancement'
+        $typeConflict.remove_labels = ''
+        $typeConflict.proposed_changes = ''
         $typeConflict.notes = 'Conflicting issue type candidates: Bug, Support.'
 
         $resolution = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
@@ -561,9 +565,35 @@ Describe 'Invoke-GitHubMigration' {
         $result.summary.resolved_items | Should Be 3
         $result.summary.manual_review_items | Should Be 1
         @($result.proposals | Where-Object url -eq $typeConflict.url)[0].proposed_type | Should Be 'Bug'
+        @($result.proposals | Where-Object url -eq $typeConflict.url)[0].proposed_labels | Should Be 'bug|enhancement'
         @($result.proposals | Where-Object url -eq $priorityConflict.url)[0].proposed_priority | Should Be 'Urgent'
         @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_project_status | Should BeNullOrEmpty
         @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_changes | Should Not Match 'project_status:'
         @($result.proposals | Where-Object url -eq $resolution.url)[0].manual_review | Should Be $true
+    }
+
+    It 'removes the incompatible canonical label after resolving a type conflict' {
+        $sourcePlanPath = Join-Path $TestDrive 'canonical-label-conflict-plan.json'
+        $resolutionOutput = Join-Path $TestDrive 'canonical-label-conflict-resolution'
+        New-TestPlan -Path $sourcePlanPath -ManualReview
+        $sourcePlan = Get-Content -Raw $sourcePlanPath | ConvertFrom-Json
+        $sourcePlan.proposals[0].current_type = 'Bug'
+        $sourcePlan.proposals[0].proposed_type = 'Bug'
+        $sourcePlan.proposals[0].current_labels = 'bug|enhancement'
+        $sourcePlan.proposals[0].proposed_labels = 'bug|enhancement'
+        $sourcePlan.proposals[0].remove_labels = ''
+        $sourcePlan.proposals[0].proposed_changes = ''
+        $sourcePlan.proposals[0].notes = 'Conflicting issue type candidates: Bug, Feature.'
+        $sourcePlan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $sourcePlanPath
+
+        & $script:manualResolutionScript -SourcePlanPath $sourcePlanPath -OutputDirectory $resolutionOutput
+
+        $resultPath = Get-ChildItem $resolutionOutput -Filter '*.json' | Select-Object -First 1 -ExpandProperty FullName
+        $proposal = (Get-Content -Raw $resultPath | ConvertFrom-Json).proposals[0]
+        $proposal.proposed_type | Should Be 'Bug'
+        $proposal.proposed_labels | Should Be 'bug'
+        $proposal.remove_labels | Should Be 'enhancement'
+        $proposal.proposed_changes | Should Match 'remove_labels:enhancement'
+        $proposal.manual_review | Should Be $false
     }
 }
