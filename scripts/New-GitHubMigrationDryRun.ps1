@@ -307,20 +307,6 @@ foreach ($organization in $Organizations) {
             continue
         }
 
-        if (-not $repository.has_issues) {
-            $repositoryRows.Add([pscustomobject]@{
-                organization = $organization
-                repository = $repository.name
-                archived = [bool] $repository.archived
-                default_branch = $repository.default_branch
-                item_count = 0
-                proposed_change_count = 0
-                manual_review_count = 0
-                note = 'Issues are disabled.'
-            })
-            continue
-        }
-
         Write-Host "  Reading $organization/$($repository.name)..."
 
         try {
@@ -345,7 +331,7 @@ foreach ($organization in $Organizations) {
                 item_count = $repoProposals.Count
                 proposed_change_count = @($repoProposals | Where-Object { -not [string]::IsNullOrWhiteSpace($_.proposed_changes) }).Count
                 manual_review_count = @($repoProposals | Where-Object manual_review).Count
-                note = ''
+                note = if ($repository.has_issues) { '' } else { 'New issue creation is disabled; existing history was audited.' }
             })
         }
         catch {

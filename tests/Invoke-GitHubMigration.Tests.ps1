@@ -53,7 +53,7 @@ function global:gh {
         Write-Response @([pscustomobject]@{
             name = 'example'
             archived = $false
-            has_issues = $true
+            has_issues = [bool] $global:FakeGithub.has_issues
             default_branch = 'master'
         })
         return
@@ -243,6 +243,7 @@ function New-TestPlan {
 Describe 'Invoke-GitHubMigration' {
     BeforeEach {
         $global:FakeGithub = @{
+            has_issues = $true
             type = $null
             priority = $null
             issue_labels = @('feature', 'urgent')
@@ -304,6 +305,24 @@ Describe 'Invoke-GitHubMigration' {
         $plan.proposals[0].source_updated_at | Should Be '2026-07-11T12:00:00Z'
         $plan.proposals[0].current_priority | Should Be 'Urgent'
         ($plan.proposals[0].proposed_changes -match 'priority:') | Should Be $false
+    }
+
+    It 'audits existing issue history when new issue creation is disabled' {
+        $global:FakeGithub.has_issues = $false
+        $dryRunOutput = Join-Path $TestDrive 'issues-disabled-dry-run'
+
+        Push-Location $script:repositoryRoot
+        try {
+            & $script:dryRunScript -Organizations pylesoft -OutputDirectory $dryRunOutput
+        }
+        finally {
+            Pop-Location
+        }
+
+        $planFile = Get-ChildItem -LiteralPath $dryRunOutput -Filter '*.json' | Select-Object -First 1
+        $plan = Get-Content -Raw $planFile.FullName | ConvertFrom-Json
+        $plan.summary.items | Should Be 1
+        $plan.proposals[0].number | Should Be 1
     }
 
     It 'blocks obsolete label deletion while live associations remain' {
