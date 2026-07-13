@@ -3,6 +3,7 @@ $script:applyScript = Join-Path $script:repositoryRoot 'scripts/Invoke-GitHubMig
 $script:dryRunScript = Join-Path $script:repositoryRoot 'scripts/New-GitHubMigrationDryRun.ps1'
 $script:labelCatalogDryRunScript = Join-Path $script:repositoryRoot 'scripts/New-GitHubLabelCatalogDryRun.ps1'
 $script:labelCatalogApplyScript = Join-Path $script:repositoryRoot 'scripts/Invoke-GitHubLabelCatalog.ps1'
+$script:manualResolutionScript = Join-Path $script:repositoryRoot 'scripts/New-GitHubManualResolutionPlan.ps1'
 
 function global:gh {
     $arguments = @($args)
@@ -511,5 +512,58 @@ Describe 'Invoke-GitHubMigration' {
     AfterAll {
         Remove-Item Function:\global:gh -ErrorAction SilentlyContinue
         Remove-Variable FakeGithub -Scope Global -ErrorAction SilentlyContinue
+    }
+
+    It 'resolves deterministic manual rows while preserving state-reason exceptions' {
+        $sourcePlanPath = Join-Path $TestDrive 'manual-source-plan.json'
+        $resolutionOutput = Join-Path $TestDrive 'manual-resolution'
+        New-TestPlan -Path $sourcePlanPath -ManualReview
+        $sourcePlan = Get-Content -Raw $sourcePlanPath | ConvertFrom-Json
+        $baseProposal = $sourcePlan.proposals[0]
+
+        $typeConflict = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        $typeConflict.url = 'https://github.com/pylesoft/example/issues/1'
+        $typeConflict.proposed_type = $null
+        $typeConflict.notes = 'Conflicting issue type candidates: Bug, Support.'
+
+        $resolution = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        $resolution.number = 2
+        $resolution.url = 'https://github.com/pylesoft/example/issues/2'
+        $resolution.notes = 'Closed-issue state reason cannot be changed safely; preserve resolution label.'
+
+        $projectStatus = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        $projectStatus.number = 3
+        $projectStatus.url = 'https://github.com/pylesoft/example/issues/3'
+        $projectStatus.proposed_project_status = 'Code review'
+        $projectStatus.proposed_changes = 'project_status:<none>->Code review;remove_labels:to review'
+        $projectStatus.notes = 'Project Status requires verification.'
+
+        $priorityConflict = $baseProposal | ConvertTo-Json -Depth 12 | ConvertFrom-Json
+        $priorityConflict.number = 4
+        $priorityConflict.url = 'https://github.com/pylesoft/example/issues/4'
+        $priorityConflict.proposed_priority = $null
+        $priorityConflict.notes = 'Conflicting Priority candidates: High, Urgent.'
+
+        $sourcePlan.proposals = @($typeConflict, $resolution, $projectStatus, $priorityConflict)
+        $sourcePlan.summary.items = 4
+        $sourcePlan.summary.items_with_proposed_changes = 4
+        $sourcePlan.summary.manual_review_items = 4
+        $sourcePlan | ConvertTo-Json -Depth 12 | Set-Content -Encoding utf8 $sourcePlanPath
+
+        & $script:manualResolutionScript `
+            -SourcePlanPath $sourcePlanPath `
+            -OutputDirectory $resolutionOutput `
+            -ConfirmedDoneProjectUrls @($projectStatus.url)
+
+        $resultPath = Get-ChildItem $resolutionOutput -Filter '*.json' | Select-Object -First 1 -ExpandProperty FullName
+        $result = Get-Content -Raw $resultPath | ConvertFrom-Json
+
+        $result.summary.resolved_items | Should Be 3
+        $result.summary.manual_review_items | Should Be 1
+        @($result.proposals | Where-Object url -eq $typeConflict.url)[0].proposed_type | Should Be 'Bug'
+        @($result.proposals | Where-Object url -eq $priorityConflict.url)[0].proposed_priority | Should Be 'Urgent'
+        @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_project_status | Should BeNullOrEmpty
+        @($result.proposals | Where-Object url -eq $projectStatus.url)[0].proposed_changes | Should Not Match 'project_status:'
+        @($result.proposals | Where-Object url -eq $resolution.url)[0].manual_review | Should Be $true
     }
 }
