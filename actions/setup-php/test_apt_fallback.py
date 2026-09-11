@@ -1,11 +1,24 @@
 import pathlib
+import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from apt_fallback import MIRROR, use_fallback
 
 
 class FallbackTest(unittest.TestCase):
+    def test_probe_timeout_uses_available_fallback(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = pathlib.Path(folder) / "sources.list"
+            path.write_text("deb http://archive.ubuntu.com/ubuntu noble main\n")
+            with patch("apt_fallback.subprocess.run", side_effect=[
+                subprocess.TimeoutExpired("curl", 7),
+                subprocess.CompletedProcess("curl", 0),
+            ]):
+                self.assertTrue(use_fallback([path], "noble"))
+            self.assertEqual(path.read_text(), f"deb {MIRROR} noble main\n")
+
     def test_switches_only_failed_official_sources_and_preserves_apt_policy(self):
         with tempfile.TemporaryDirectory() as folder:
             path = pathlib.Path(folder) / "ubuntu.sources"
