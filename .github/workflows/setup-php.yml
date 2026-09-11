@@ -1,0 +1,39 @@
+name: Validate shared PHP setup
+
+on:
+  pull_request:
+    paths: ['actions/setup-php/**', '.github/workflows/setup-php.yml']
+  push:
+    branches: [master]
+    paths: ['actions/setup-php/**', '.github/workflows/setup-php.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Test mirror fallback
+        run: python3 -B -m unittest discover -s actions/setup-php -v
+      - name: Setup PHP
+        id: php
+        uses: ./actions/setup-php
+        timeout-minutes: 3
+        with:
+          extensions: bcmath, pdo_sqlite
+          coverage: none
+          ini-values: memory_limit=1G
+      - name: Verify PHP toolchain
+        env:
+          INSTALLED_PHP: ${{ steps.php.outputs.php-version }}
+        run: |
+          php -r 'exit(PHP_VERSION_ID >= 80400 && PHP_VERSION_ID < 80500 && extension_loaded("bcmath") && extension_loaded("pdo_sqlite") && ini_get("memory_limit") === "1G" && getenv("INSTALLED_PHP") === PHP_VERSION ? 0 : 1);'
+          composer --version
