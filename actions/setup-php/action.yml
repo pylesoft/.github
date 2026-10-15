@@ -53,8 +53,3 @@ runs:
         ini-values: ${{ inputs.ini-values }}
         ini-file: ${{ inputs.ini-file }}
         github-token: ${{ inputs.github-token }}
-
-    - name: Ensure supported SQLite runtime
-      if: runner.os == 'Linux'
-      shell: bash
-      run: bash "$GITHUB_ACTION_PATH/setup-sqlite.sh"
