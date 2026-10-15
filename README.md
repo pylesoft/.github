@@ -8,10 +8,3 @@ The shared `pylesoft/.github/actions/setup-php@master` action enables cached PHP
 builds by default on supported runners, including experimental support for
 Blacksmith and Depot. Callers inherit this behavior without workflow changes.
 To disable caching for a job, pass `use-builds-cache: 'false'` under `with`.
-
-On Ubuntu 24.04 x64 and ARM runners, enabled PHP SQLite extensions use SQLite
-3.46 or newer so deeply nested queries work. When the installed library is older,
-the action downloads a checksum-verified Ubuntu SQLite 3.46.1 package and extracts
-its library into the runner's temporary directory. No compilation or system package
-changes are required. Newer libraries, disabled SQLite extensions and other runner
-versions remain unchanged.
