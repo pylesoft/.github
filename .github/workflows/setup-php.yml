@@ -70,7 +70,7 @@ jobs:
         with:
           entrypoint: php
           args: >-
-            -r '$pdo = new PDO("sqlite::memory:"); if ($pdo->query("SELECT 42")->fetchColumn() !== 42 || (new SQLite3(":memory:"))->querySingle("SELECT 42") !== 42) { exit(1); } echo "Alpine PHP SQLite " . SQLite3::version()["versionString"] . PHP_EOL;'
+            -r "if ((new PDO('sqlite::memory:'))->query('SELECT 42')->fetchColumn() !== 42 || (new SQLite3(':memory:'))->querySingle('SELECT 42') !== 42) { exit(1); } echo 'Alpine PHP SQLite ' . SQLite3::version()['versionString'] . PHP_EOL;"
 
   sqlite-benchmark:
     env:
