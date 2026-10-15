@@ -79,3 +79,19 @@ jobs:
         run: |
           [[ ":$LD_LIBRARY_PATH:" == *":/usr/local/lib:"* ]]
           php actions/setup-php/test_sqlite.php
+      - name: Verify SQLite download mirror fallback
+        env:
+          LD_LIBRARY_PATH: /usr/local/lib
+        shell: bash
+        run: |
+          curl() {
+            if [[ "$*" == *https://security.ubuntu.com/ubuntu/* ]]; then
+              echo 'Simulating an unavailable primary archive.' >&2
+              return 22
+            fi
+            command curl "$@"
+          }
+          export -f curl
+          bash actions/setup-php/setup-sqlite.sh
+      - name: Verify runtime from mirror
+        run: php actions/setup-php/test_sqlite.php

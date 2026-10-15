@@ -40,9 +40,10 @@ esac
 started_at=${EPOCHREALTIME/./}
 runtime_directory=$(mktemp -d "$RUNNER_TEMP/php-sqlite.XXXXXX")
 package="$runtime_directory/sqlite.deb"
-curl --fail --silent --show-error --location --retry 2 --connect-timeout 10 --max-time 30 \
-  "https://security.ubuntu.com/ubuntu/pool/main/s/sqlite3/libsqlite3-0_3.46.1-9ubuntu0.3_${architecture}.deb" \
-  --output "$package"
+package_path="pool/main/s/sqlite3/libsqlite3-0_3.46.1-9ubuntu0.3_${architecture}.deb"
+curl_options=(--fail --silent --show-error --location --retry 1 --connect-timeout 3 --max-time 15 --output "$package")
+curl "${curl_options[@]}" "https://security.ubuntu.com/ubuntu/$package_path" ||
+  curl "${curl_options[@]}" "http://azure.archive.ubuntu.com/ubuntu/$package_path"
 echo "$checksum  $package" | sha256sum --check
 dpkg-deb --extract "$package" "$runtime_directory"
 
