@@ -16,24 +16,105 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, blacksmith-4vcpu-ubuntu-2404]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, blacksmith-4vcpu-ubuntu-2404, blacksmith-4vcpu-ubuntu-2404-arm]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v6
       - name: Test mirror fallback
         run: python3 -B -m unittest discover -s actions/setup-php -v
+      - name: Record native runtime
+        id: native
+        run: |
+          echo "ld_library_path=${LD_LIBRARY_PATH:-}" >> "$GITHUB_OUTPUT"
+          echo "sqlite_cli_version=$(sqlite3 --version)" >> "$GITHUB_OUTPUT"
+          test "$(sqlite3 :memory: 'SELECT 42;')" = 42
       - name: Setup PHP
         id: php
         uses: ./actions/setup-php
         timeout-minutes: 3
         with:
-          extensions: bcmath, pdo_sqlite
+          extensions: bcmath, pdo_sqlite, sqlite3
           coverage: none
           ini-values: memory_limit=1G
       - name: Verify PHP toolchain
         env:
           INSTALLED_PHP: ${{ steps.php.outputs.php-version }}
+          ORIGINAL_LD_LIBRARY_PATH: ${{ steps.native.outputs.ld_library_path }}
+          ORIGINAL_SQLITE_CLI_VERSION: ${{ steps.native.outputs.sqlite_cli_version }}
         run: |
+          test "${LD_LIBRARY_PATH:-}" = "$ORIGINAL_LD_LIBRARY_PATH"
+          test "$(sqlite3 --version)" = "$ORIGINAL_SQLITE_CLI_VERSION"
+          test "$(sqlite3 :memory: 'SELECT 42;')" = 42
           php -r 'exit(PHP_VERSION_ID >= 80400 && PHP_VERSION_ID < 80500 && extension_loaded("bcmath") && extension_loaded("pdo_sqlite") && ini_get("memory_limit") === "1G" && getenv("INSTALLED_PHP") === PHP_VERSION ? 0 : 1);'
           composer --version
+          php actions/setup-php/test_sqlite.php
+          database=$(mktemp)
+          trap 'rm -f "$database"' EXIT
+          sqlite3 "$database" 'CREATE TABLE smoke (value INTEGER); INSERT INTO smoke VALUES (42);'
+          php -r '$pdo = new PDO("sqlite:" . $argv[1]); if ($pdo->query("SELECT value FROM smoke")->fetchColumn() !== 42) { throw new RuntimeException("Cannot read native SQLite database."); } $pdo->exec("UPDATE smoke SET value = 43");' "$database"
+          test "$(sqlite3 "$database" 'SELECT value FROM smoke;')" = 43
+      - name: Verify SQLite setup skips supported and disabled extensions
+        shell: bash
+        run: |
+          export GITHUB_ENV="$(mktemp)"
+          bash actions/setup-php/setup-sqlite.sh
+          test ! -s "$GITHUB_ENV"
+          php() { command php -n "$@"; }
+          export -f php
+          php -r 'exit(extension_loaded("pdo_sqlite") || extension_loaded("sqlite3") ? 1 : 0);'
+          bash actions/setup-php/setup-sqlite.sh
+          test ! -s "$GITHUB_ENV"
+      - name: Verify Alpine container actions
+        uses: docker://php:8.1-cli-alpine
+        with:
+          entrypoint: php
+          args: >-
+            -r '$pdo = new PDO("sqlite::memory:"); if ($pdo->query("SELECT 42")->fetchColumn() !== 42 || (new SQLite3(":memory:"))->querySingle("SELECT 42") !== 42) { exit(1); } echo "Alpine PHP SQLite " . SQLite3::version()["versionString"] . PHP_EOL;'
+
+  sqlite-benchmark:
+    env:
+      LD_LIBRARY_PATH: /usr/local/lib
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [blacksmith-4vcpu-ubuntu-2404, blacksmith-4vcpu-ubuntu-2404-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Setup baseline PHP toolchain
+        uses: pylesoft/.github/actions/setup-php@c1766cc140833d7a342a3ec997ebf9fa5a24adc4
+        timeout-minutes: 3
+        with:
+          extensions: pdo_sqlite, sqlite3
+          coverage: none
+      - name: Measure SQLite setup with primary archive unavailable
+        shell: bash
+        run: |
+          native_version=$(php -r 'echo (new PDO("sqlite::memory:"))->query("SELECT sqlite_version()")->fetchColumn();')
+          if php -r 'exit(version_compare($argv[1], "3.46.0", ">=") ? 0 : 1);' "$native_version"; then
+            echo "Native SQLite $native_version already meets the baseline; no download benchmark needed." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          export PRIMARY_FAILURE_MARKER="$RUNNER_TEMP/sqlite-primary-failed"
+          curl() {
+            if [[ "$*" == *https://security.ubuntu.com/ubuntu/* ]]; then
+              echo 'Simulating an unavailable primary archive.' >&2
+              echo attempted >> "$PRIMARY_FAILURE_MARKER"
+              return 22
+            fi
+            command curl "$@"
+          }
+          export -f curl
+          started=$EPOCHREALTIME
+          bash actions/setup-php/setup-sqlite.sh
+          elapsed=$(awk -v start="$started" -v end="$EPOCHREALTIME" 'BEGIN { printf "%.3f", end - start }')
+          test -s "$PRIMARY_FAILURE_MARKER"
+          printf '### SQLite mirror setup on %s\n\nNative SQLite: %s\n\nAdded setup: **%s seconds** (primary archive failure simulated; mirror download, extraction and PHP verification).\n' '${{ matrix.runner }}' "$native_version" "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify upgraded runtime
+        run: |
+          test "${LD_LIBRARY_PATH:-}" = /usr/local/lib
+          sqlite3 --version
+          test "$(sqlite3 :memory: 'SELECT 42;')" = 42
+          php actions/setup-php/test_sqlite.php
