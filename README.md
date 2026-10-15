@@ -11,9 +11,9 @@ To disable caching for a job, pass `use-builds-cache: 'false'` under `with`.
 
 On Ubuntu 24.04 x64 and ARM runners, enabled PHP SQLite extensions use SQLite
 3.46 or newer so deeply nested queries work. When the installed library is older,
-the action downloads a checksum-verified Ubuntu SQLite 3.46.1 package and extracts
-its library into the runner's temporary directory. The runner's `patchelf` tool
-binds only the enabled PHP extensions to that library. No compilation, system
+the action downloads a checksum-verified Ubuntu SQLite 3.46.1 package and installs
+a private library beside the PHP extensions. The runner's `patchelf` tool binds
+only the enabled PHP extensions to that library. No compilation, system
 package changes or loader environment variables are required; native SQLite and
 Docker actions keep their original runtime. Newer libraries, disabled SQLite
 extensions and other runner versions remain unchanged.

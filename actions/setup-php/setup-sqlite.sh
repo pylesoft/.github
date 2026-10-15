@@ -53,6 +53,8 @@ echo "$checksum  $package" | sha256sum --check
 dpkg-deb --extract "$package" "$runtime_directory"
 
 extension_directory=$(php -r 'echo ini_get("extension_dir");')
+private_library="$extension_directory/pyle-libsqlite3-3.46.1.so"
+sudo install -m 644 "$runtime_directory/usr/lib/$library_directory/libsqlite3.so.0" "$private_library"
 enabled_extensions=$(php -r 'foreach (["pdo_sqlite", "sqlite3"] as $extension) { if (extension_loaded($extension)) { echo $extension, PHP_EOL; } }')
 for extension in $enabled_extensions; do
   extension_path="$extension_directory/$extension.so"
@@ -62,7 +64,7 @@ for extension in $enabled_extensions; do
   fi
   # Scope the library to PHP; loader environment variables also affect SQLite CLI and containers.
   sudo "$patcher" --replace-needed libsqlite3.so.0 \
-    "$runtime_directory/usr/lib/$library_directory/libsqlite3.so.0" "$extension_path"
+    "$private_library" "$extension_path"
 done
 installed_version=$(sqlite_version)
 if [[ "$installed_version" != 3.46.1 ]]; then
